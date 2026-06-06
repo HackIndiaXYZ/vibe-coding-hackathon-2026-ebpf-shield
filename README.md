@@ -14,7 +14,8 @@ Hackathon team repository for eBPF-Shield - [hackindia-team:vibe-coding-hackatho
 2. **AI Anomaly Detection**: Uses a sliding-window feature extractor to feed live behavioral telemetry into a pre-trained **Isolation Forest** machine learning model to detect anomalous execution patterns.
 3. **Deterministic Heuristics**: Catches specific attack chains (e.g., privilege escalation sequences, automated sensitive file harvesting, reverse shells).
 4. **Instant In-Kernel Kill Switch**: Resolves the classic user-space TOCTOU (Time-Of-Check to Time-Of-Use) race condition. When a threat is detected, the Python engine updates a shared eBPF Map, empowering the kernel to instantly annihilate the malicious process (`SIGKILL`) on its next syscall—before user-space even reacts.
-5. **TUI Dashboard**: A stunning, terminal-based Rich dashboard showing live syscall feeds, process scores, and a forensic Threat Log.
+5. **WSL2 PID Namespace Resolution**: Fully functional inside Windows Subsystem for Linux (WSL2) containers. eBPF-Shield uses a clever BPF map reflection mechanism to discover its true global kernel PID, protecting itself from accidental self-termination while reliably mapping global PIDs back to local ones for user-space enforcement.
+6. **TUI Dashboard**: A stunning, terminal-based Rich dashboard showing live syscall feeds, process scores, and a forensic Threat Log.
 
 ---
 
