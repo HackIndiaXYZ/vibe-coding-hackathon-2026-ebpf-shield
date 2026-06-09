@@ -54,11 +54,15 @@ class AnomalyDetector:
 
         self._model: IsolationForest | None = None
         self._scaler: StandardScaler | None = None
+        self._markov_matrix: dict | None = None
         self._stale_model: bool = False
 
         # Adversarial robustness settings
         self._feature_min: FrozenSet[float] = frozenset({0.0})
         self._feature_max: FrozenSet[float] = frozenset({10000.0})
+        
+        # Sequence model threshold (1% transition probability)
+        self.seq_threshold = 0.01
 
     # ------------------------------------------------------------------ #
     # Training                                                            #
@@ -97,6 +101,22 @@ class AnomalyDetector:
         )
         self._model.fit(X_scaled)
 
+        # Train Markov Chain (Bigram)
+        transitions = {}
+        for fv in feature_vectors:
+            seq = getattr(fv, 'syscall_sequence', [])
+            for i in range(len(seq) - 1):
+                pair = (seq[i], seq[i+1])
+                transitions[pair] = transitions.get(pair, 0) + 1
+                
+        # Normalize probabilities
+        self._markov_matrix = {}
+        for i in range(16): # 16 monitored syscall types
+            total = sum(v for k, v in transitions.items() if k[0] == i)
+            if total > 0:
+                for j in range(16):
+                    self._markov_matrix[(i, j)] = transitions.get((i, j), 0) / total
+
         # Persist to disk.
         self._save()
 
@@ -112,6 +132,9 @@ class AnomalyDetector:
 
         joblib.dump(self._model, self.model_path)
         joblib.dump(self._scaler, self.scaler_path)
+        
+        markov_path = str(self.model_path).replace(".pkl", "_markov.pkl")
+        joblib.dump(self._markov_matrix, markov_path)
 
     def load(self) -> None:
         """Load a previously trained model and scaler from disk.
@@ -132,6 +155,12 @@ class AnomalyDetector:
 
         self._model = joblib.load(self.model_path)
         self._scaler = joblib.load(self.scaler_path)
+        
+        markov_path = str(self.model_path).replace(".pkl", "_markov.pkl")
+        if os.path.exists(markov_path):
+            self._markov_matrix = joblib.load(markov_path)
+        else:
+            self._markov_matrix = {}
 
         # Validate feature count against current FEATURE_NAMES
         expected_current = len(FEATURE_NAMES)
@@ -446,11 +475,24 @@ class AnomalyDetector:
         X_scaled = self._scaler.transform(ml_features)
         raw_score: float = float(self._model.decision_function(X_scaled)[0])
 
-        # Step 4: Decide
+        # Step 4: Sequence Analysis (Markov Chain)
+        seq_anomaly = False
+        min_prob = 1.0
+        seq = getattr(fv, 'syscall_sequence', [])
+        if len(seq) > 1 and self._markov_matrix:
+            for i in range(len(seq) - 1):
+                prob = self._markov_matrix.get((seq[i], seq[i+1]), 0.0)
+                if prob < min_prob:
+                    min_prob = prob
+                if prob < self.seq_threshold:
+                    seq_anomaly = True
+                    break
+
+        # Step 5: Decide
         ml_anomaly: bool = raw_score < self.threshold
         heuristic_anomaly: bool = len(heuristic_hits) > 0
 
-        is_anomaly = ml_anomaly or heuristic_anomaly
+        is_anomaly = ml_anomaly or heuristic_anomaly or seq_anomaly
 
         # Build reason string
         reasons: List[str] = []
@@ -458,6 +500,8 @@ class AnomalyDetector:
             reasons.append("RULES: " + ", ".join(heuristic_hits))
         if ml_anomaly:
             reasons.append(f"ML: score={raw_score:.3f}")
+        if seq_anomaly:
+            reasons.append(f"SEQ: prob={min_prob:.4f}")
 
         reason = " | ".join(reasons) if reasons else "normal"
 

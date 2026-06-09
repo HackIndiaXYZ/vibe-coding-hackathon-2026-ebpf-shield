@@ -213,6 +213,7 @@ class FeatureVector:
     features: np.ndarray
     feature_names: List[str] = field(default_factory=lambda: list(FEATURE_NAMES))
     fileless_exec: bool = False
+    syscall_sequence: List[int] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +289,7 @@ class FeatureExtractor:
             features=all_features,
             feature_names=list(FEATURE_NAMES),
             fileless_exec=bool(fileless_features[5]) if len(fileless_features) > 5 else False,
+            syscall_sequence=[e.syscall_id for e in sorted_events]
         )
 
     # ------------------------------------------------------------------ #

@@ -391,7 +391,11 @@ def run_detection(dry_run: bool = False) -> int:
                 display_score = max(0.0, min(1.0, 0.5 - score))
 
                 # If the process is globally protected, ignore anomaly detections
-                is_protected = comm in PROTECTED_COMMS or pid in killer._protected_pids
+                is_protected = (
+                    comm in PROTECTED_COMMS 
+                    or pid in killer._protected_pids 
+                    or "Relay" in comm
+                )
 
                 if is_anomaly and not is_protected:
                     anomalies += 1
@@ -520,4 +524,12 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:
+        import traceback
+        import datetime
+        with open("data/fatal_crash.log", "a") as f:
+            f.write(f"\\n--- CRASH AT {datetime.datetime.now()} ---\\n")
+            traceback.print_exc(file=f)
+        sys.exit(1)

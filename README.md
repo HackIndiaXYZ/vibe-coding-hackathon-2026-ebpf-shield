@@ -111,8 +111,8 @@ python3 demo/attack_fileless_memfd.py
 
 ## 🏗️ Architecture
 
-1. **`ebpf/probes.py`**: The C-based eBPF program injected into the kernel. It pushes syscall events to a high-speed `perf_buffer` and checks the `blacklist` eBPF Map on every syscall.
-2. **`core/consumer.py`**: Reads the `perf_buffer` and aggregates raw events into 2-second sliding windows per PID.
+1. **`ebpf/probes.py`**: The C-based eBPF program injected into the kernel. It pushes syscall events to a high-speed `ring_buffer` and checks the `blacklist` eBPF Map on every syscall. It also includes a Shift-Left Heuristic to instantly kill non-root process injection attempts.
+2. **`core/consumer.py`**: Reads the `ring_buffer` and aggregates raw events into 2-second sliding windows per PID.
 3. **`core/feature_extractor.py`**: Condenses raw syscalls into a 15-dimensional mathematical feature vector (e.g., syscall rates, unique syscalls, entropy).
 4. **`core/detector.py`**: The brain. Evaluates the feature vector against the `scikit-learn` Isolation Forest and deterministic rules.
 5. **`core/killer.py`**: The enforcer. Writes malicious PIDs to the kernel `blacklist` map for instant-blocking, executes a user-space fallback `SIGKILL`, and writes a JSON record to `data/forensic_log.jsonl`.

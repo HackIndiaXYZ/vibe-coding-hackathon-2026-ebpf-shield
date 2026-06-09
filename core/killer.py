@@ -140,7 +140,7 @@ class ProcessKiller:
         local_pid = self._translate_to_local_pid(pid)
         effective_comm = comm or self._resolve_comm(local_pid)
 
-        if effective_comm in self._protected_comms:
+        if effective_comm in self._protected_comms or "Relay" in effective_comm:
             logger.warning(
                 "Refusing to kill PID %d (%s) — protected comm.",
                 pid,

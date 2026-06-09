@@ -37,7 +37,7 @@ Here is the exact step-by-step journey of a system call, from the moment a user 
 
 1. **User Action**: A user types `cat /etc/passwd`.
 2. **Kernel Hook**: The Linux kernel fires the `sys_enter_openat` tracepoint.
-3. **eBPF C Code**: Our C code (`ebpf/probes.py`) intercepts the call, packages the PID and filename into a C-struct, and pushes it to a high-speed ring buffer (`BPF_PERF_OUTPUT`).
+3. **eBPF C Code**: Our C code (`ebpf/probes.py`) intercepts the call, packages the PID and filename into a C-struct, and pushes it to a high-speed ring buffer (`BPF_RINGBUF_OUTPUT`).
 4. **Python Consumer**: `core/consumer.py` reads the ring buffer and groups the events by PID into time windows.
 5. **Feature Extraction**: `core/feature_extractor.py` converts the raw events into a 15-dimensional mathematical array (e.g., counting the rate of syscalls, checking if the file opened was sensitive).
 6. **Detection Brain**: `core/detector.py` runs the array through the AI model and our hardcoded heuristic rules.
@@ -53,10 +53,11 @@ Let's look at the specific files in the codebase and what they do.
 This file contains actual C code wrapped in a Python string. 
 * It defines the `TRACEPOINT_PROBE` functions.
 * It contains the **Blacklist Map** (`BPF_HASH(blacklist, u32, u32)`). At the start of every tracepoint, it checks if the current PID is in the blacklist. If yes, it calls `bpf_send_signal(9)` to instantly kill it.
+* **Shift-Left Heuristic**: It implements unconditional checks in the kernel (e.g., banning `ptrace` for non-root users) to instantly kill malicious activity before it even reaches user-space.
 
 ### 📦 `core/consumer.py` (The Data Aggregator)
 This is the bridge between the kernel and user-space.
-* It uses a polling loop to constantly read the `perf_buffer`.
+* It uses a polling loop to constantly read the `ring_buffer`.
 * It maintains a `sliding_windows` dictionary. Every time a process makes a new syscall, it appends it to that process's window until it has enough data to emit for analysis.
 
 ### 🧮 `core/feature_extractor.py` (The Math Engine)

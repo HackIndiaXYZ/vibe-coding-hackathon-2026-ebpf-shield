@@ -64,6 +64,8 @@ PROTECTED_COMMS: FrozenSet[str] = frozenset({
     "systemd-user",
     "systemd-userwor",
     "systemd-logind",
+    "python3",
+    "python",
 })
 """Process comm names that must never be killed."""
 

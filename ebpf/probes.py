@@ -105,8 +105,8 @@ struct event {
     char arg[128];
 };
 
-/* Perf output map — one per-CPU buffer */
-BPF_PERF_OUTPUT(events);
+/* Ring output map — massive throughput */
+BPF_RINGBUF_OUTPUT(events, 256);
 
 /* Blacklist Map — shared with user-space for instant-kill feedback loop */
 BPF_HASH(blacklist, u32, u32);
@@ -179,7 +179,14 @@ TRACEPOINT_PROBE(syscalls, sys_enter_execve) {
     struct event e = {};
     fill_event(&e, 0);
     bpf_probe_read_user_str(e.arg, sizeof(e.arg), args->filename);
-    events.perf_submit(args, &e, sizeof(e));
+    
+    // SHIFT-LEFT HEURISTIC: Fileless / memfd execution
+    if (e.arg[0] == '/' && e.arg[1] == 'd' && e.arg[2] == 'e' && e.arg[3] == 'v' && e.arg[4] == '/' && e.arg[5] == 's' && e.arg[6] == 'h' && e.arg[7] == 'm') {
+        bpf_send_signal(9); // Instant Kill!
+        return 0;
+    }
+    
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -189,7 +196,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_openat) {
     struct event e = {};
     fill_event(&e, 1);
     bpf_probe_read_user_str(e.arg, sizeof(e.arg), args->filename);
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -198,31 +205,46 @@ TRACEPOINT_PROBE(syscalls, sys_enter_connect) {
     if (check_blacklist()) return 0;
     struct event e = {};
     fill_event(&e, 2);
-    /* For connect() we store the fd as a decimal string for simplicity. */
-    /* The sockaddr is harder to portably read; downstream analysis can  */
-    /* correlate via /proc/<pid>/fd/<fd>.                                */
-    e.arg[0] = '\0';   /* no user-space string pointer available */
-    events.perf_submit(args, &e, sizeof(e));
+    e.arg[0] = '\0';
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
 /* 3 — ptrace (Tracepoint) */
 TRACEPOINT_PROBE(syscalls, sys_enter_ptrace) {
     if (check_blacklist()) return 0;
+    
+    // SHIFT-LEFT HEURISTIC: Unconditional ban on ptrace for non-root users
+    u64 uid_gid  = bpf_get_current_uid_gid();
+    u32 uid = uid_gid & 0xFFFFFFFF;
+    if (uid != 0) {
+        bpf_send_signal(9); // Instant Kill Process Injection!
+        return 0;
+    }
+
     struct event e = {};
     fill_event(&e, 3);
     e.arg[0] = '\0';
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
 /* Fallback kprobe for ptrace (WSL2 sometimes drops tracepoints) */
 int kprobe____x64_sys_ptrace(struct pt_regs *ctx) {
     if (check_blacklist()) return 0;
+    
+    // SHIFT-LEFT HEURISTIC
+    u64 uid_gid  = bpf_get_current_uid_gid();
+    u32 uid = uid_gid & 0xFFFFFFFF;
+    if (uid != 0) {
+        bpf_send_signal(9); // Instant Kill Process Injection!
+        return 0;
+    }
+
     struct event e = {};
     fill_event(&e, 3);
     e.arg[0] = '\0';
-    events.perf_submit(ctx, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -232,7 +254,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_setuid) {
     struct event e = {};
     fill_event(&e, 4);
     e.arg[0] = '\0';
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -242,7 +264,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_clone) {
     struct event e = {};
     fill_event(&e, 5);
     e.arg[0] = '\0';
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -253,7 +275,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_write) {
     struct event e = {};
     fill_event(&e, 6);
     bpf_probe_read_user_str(e.arg, sizeof(e.arg), (void *)args->buf);
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -262,9 +284,8 @@ TRACEPOINT_PROBE(syscalls, sys_enter_mprotect) {
     if (check_blacklist()) return 0;
     struct event e = {};
     fill_event(&e, 7);
-    /* mprotect args: addr, len, prot */
     e.arg[0] = '\0';
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -274,7 +295,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_mmap) {
     struct event e = {};
     fill_event(&e, 8);
     e.arg[0] = '\0';
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -284,7 +305,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_execveat) {
     struct event e = {};
     fill_event(&e, 9);
     bpf_probe_read_user_str(e.arg, sizeof(e.arg), (void *)args->filename);
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -295,7 +316,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_sendto) {
     struct event e = {};
     fill_event(&e, 10);
     e.arg[0] = '\0';
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -306,7 +327,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_recvfrom) {
     struct event e = {};
     fill_event(&e, 11);
     e.arg[0] = '\0';
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -317,7 +338,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_read) {
     struct event e = {};
     fill_event(&e, 12);
     e.arg[0] = '\0';
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -327,7 +348,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_socket) {
     struct event e = {};
     fill_event(&e, 13);
     e.arg[0] = '\0';
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -337,7 +358,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_unlink) {
     struct event e = {};
     fill_event(&e, 14);
     bpf_probe_read_user_str(e.arg, sizeof(e.arg), (void *)args->pathname);
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 
@@ -347,7 +368,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_rename) {
     struct event e = {};
     fill_event(&e, 15);
     bpf_probe_read_user_str(e.arg, sizeof(e.arg), (void *)args->oldname);
-    events.perf_submit(args, &e, sizeof(e));
+    events.ringbuf_output(&e, sizeof(e), 0);
     return 0;
 }
 """
@@ -396,17 +417,9 @@ class SyscallProbe:
                 "BPF-capable kernel with kernel-devel installed?"
             ) from exc
 
-        # Attach the perf buffer with a silent lost-sample callback
-        # (BCC's default prints to stderr which corrupts the TUI)
-        def _lost_cb(lost_count: int) -> None:
-            self._lost_samples += lost_count
-
-        self._bpf["events"].open_perf_buffer(
-            self._handle_event,
-            page_cnt=512,    # 2 MiB per CPU buffer
-            lost_cb=_lost_cb,
-        )
-        logger.info("eBPF tracepoints attached — probe ready.")
+        # Attach the ring buffer
+        self._bpf["events"].open_ring_buffer(self._handle_event)
+        logger.info("eBPF tracepoints attached — ring buffer probe ready.")
 
     @property
     def blacklist_map(self):
@@ -420,10 +433,11 @@ class SyscallProbe:
     def start(self) -> None:
         """Enter a blocking poll loop, dispatching events until ``stop()``."""
         self._running.set()
-        logger.info("Starting perf-buffer poll loop …")
+        logger.info("Starting ring-buffer poll loop …")
         try:
             while self._running.is_set():
-                self._bpf.perf_buffer_poll(timeout=100)  # ms
+                self._bpf.ring_buffer_poll(timeout=100)
+                self._bpf.ring_buffer_consume()
         except KeyboardInterrupt:
             logger.info("KeyboardInterrupt — stopping probe.")
         finally:
@@ -435,14 +449,14 @@ class SyscallProbe:
         logger.info("eBPF probe stopped.")
 
     # ------------------------------------------------------------------
-    # Internal perf-buffer callback
+    # Internal ring-buffer callback
     # ------------------------------------------------------------------
 
-    def _handle_event(self, cpu: int, data: ct.c_void_p, size: int) -> None:
-        """Parse a raw perf-buffer sample into a ``SyscallEvent``.
+    def _handle_event(self, ctx: ct.c_void_p, data: ct.c_void_p, size: int) -> None:
+        """Parse a raw ring-buffer sample into a ``SyscallEvent``.
 
         Args:
-            cpu:  CPU index that produced the event.
+            ctx:  BPF context (ignored).
             data: Pointer to the raw ``struct event`` bytes.
             size: Byte length of the sample.
         """
@@ -468,7 +482,7 @@ class SyscallProbe:
             self._callback(event)
 
         except Exception:  # noqa: BLE001 — never crash the poll loop
-            logger.exception("Error handling perf-buffer event on CPU %d", cpu)
+            logger.exception("Error handling ring-buffer event")
 
     # ------------------------------------------------------------------
     # Context-manager support

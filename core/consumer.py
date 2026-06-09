@@ -101,15 +101,17 @@ class EventConsumer:
             PID if it contains enough events.  Otherwise ``None``.
         """
         pid = event.pid
-        if pid not in self._windows:
+        is_new = pid not in self._windows
+        if is_new:
             self._windows[pid] = []
-            
-            # Periodically prune stale PIDs (every 100 new PIDs)
-            if len(self._windows) % 100 == 0:
-                self._prune_stale_pids(event.timestamp_ns)
 
         window = self._windows[pid]
         window.append(event)
+        
+        # Periodically prune stale PIDs (every 100 new PIDs)
+        # Done after appending to avoid pruning the newly added PID
+        if is_new and len(self._windows) % 100 == 0:
+            self._prune_stale_pids(event.timestamp_ns)
 
         # Prune old events from this PID's window
         cutoff = event.timestamp_ns - self._window_ns
